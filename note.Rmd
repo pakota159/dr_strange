@@ -1,0 +1,223 @@
+---
+title: "Bác sĩ Lạ"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+```{r include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(ggthemes)
+library(ggplot2)
+library(stringi)
+library(ggrepel)
+```
+
+Ở một vũ trụ nào đó:
+
+Kevin feige: Huh, nhện nhọ mở màn Phase 4 của MCU thành công vkl, không biết Bác sĩ Lạ tình hình sẽ thế nào ta?
+
+Data Driver: Để tui check xem
+
+- Revenue cumulative theo ngày của tất cả các phim chiếu rạp của MCU: Revenue những tuần đầu sẽ quyết định gross của phim. Phim kiếm được nhiều thời gian đầu sẽ có xu hướng tiếp tục. https://www.the-numbers.com/movies/franchise/Marvel-Cinematic-Universe#tab=summary
+
+- Review Youtube trailer: more view, more success, this could be a indicator for the viral of the movie. https://www.hollywoodreporter.com/movies/movie-news/how-predictive-are-youtube-trailer-views-box-office-openings-1251422/
+
+- Casting: more superhero, more money
+
+- Directors: is there someone who is better than others in terms of making successful movies
+
+
+Lesson learned: 
+
+- Bắt đầu với câu hỏi xác định (Đánh giá thành công về thương mại của Dr Strange)
+
+- Chia nhỏ câu hỏi (Để trả lời câu hỏi đó thì cần trả lời những câu hỏi gì nhỏ hơn không?)
+
+- Cái gì người ta làm rồi thì mình tận dụng, sử dụng lại (nhớ dẫn nguồn).
+
+
+```{r echo = FALSE, message = FALSE, include = FALSE}
+top_yt <- read_csv("top_yt.csv")
+mcu <- read_csv("mcu.csv")
+```
+
+Xác định phim có số lần mà trailer lên top Youtube, cũng như tổng lượt view của những lần lên top đó.
+```{r message = FALSE}
+top_yt %>%
+    group_by(most_viewed_film) %>%
+    summarise(
+      n = n(),
+      views = sum(weekly_views)
+    )
+```
+
+Vẽ chart đánh giá xem domestic với international như thế nào.
+Hầu hết các phim đều có xu hướng là doanh thu domestic cao thì doanh thu quốc tế cũng cao. Ngoại trừ Black Panther có doanh thu Bắc Mỹ cao nhưng Doanh thu nước ngoài chưa cao (So sánh với các phim có doanh thu Bắc Mỹ tương đồng như Avenger Infinity War, Spider-Man No Way Home)
+
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    ggplot(aes(x=DomesticGross / 1e+06, y=OverseasGross / 1e+06, label=Movie)) +
+    geom_point(alpha=0.7, colour = "red") +
+    geom_smooth(method='lm', formula= y~x) +
+    geom_label_repel(aes(label=ifelse(WorldwideGross>1e+09, as.character(Movie), '')),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  min.segment.length = 0,
+                  segment.color = 'grey50') +
+    scale_color_fivethirtyeight() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Doanh thu nước ngoài (Triệu USD)") +
+    xlab("Doanh thu Bắc Mỹ (Triệu USD)")
+```
+
+Tính hệ số tương quan của doanh thu Bắc Mỹ và Doanh thu quốc tế.
+
+Vẽ bubble chart để xem doanh thu theo năm phát hành như thế nào
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    mutate(movie_type = case_when(
+        grepl("Spider", Movie) ~ "Spider-Man",
+        grepl("Captain America", Movie) ~ "Captain America",
+        grepl("Iron", Movie) ~ "Iron Man",
+        grepl("Thor", Movie) ~ "Thor",
+        grepl("Doctor", Movie) ~ "Dr Strange",
+        TRUE ~ "Others"
+    )) %>%
+    ggplot(aes(x=YearOfRelease, y=WorldwideGross / 1e+06, label=Movie, colour = as.factor(movie_type))) +
+    geom_point(alpha=0.7, show.legend = FALSE) +
+    geom_label_repel(
+        aes(
+            label=ifelse(
+                movie_type != "Others", 
+                as.character(Movie), 
+                ''
+            )
+        ),
+        box.padding   = 0.35, 
+        point.padding = 0.5,
+        min.segment.length = 0,
+        segment.color = 'grey50',
+        show.legend = FALSE
+    ) +
+    scale_fill_brewer() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Doanh thu toàn cầu (Triệu USD)") +
+    xlab("Năm sản xuất")
+```
+
+Đếm số nhân vật có trong mỗi phim
+
+```{r message = FALSE, echo=FALSE}
+chars_in_movies <- mcu %>% 
+    select(-YearOfRelease, -Budget, -DomesticGross, -OverseasGross, -WeekendGross, -WorldwideGross, -YoutubeTopViews, -YoutubeTopCounts) %>%
+    pivot_longer(!Movie, names_to = "char", values_to = "is_appeared") %>%
+    group_by(Movie) %>%
+    summarise(
+      char_count = sum(ifelse(is_appeared == "yes", 1, 0))
+    )
+```
+
+Theo số nhân vật
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    inner_join(chars_in_movies) %>%
+    select(Movie, char_count, WorldwideGross, YearOfRelease) %>%
+    mutate(
+        chars_type = case_when(
+            char_count < 3 ~ "Less than 3",
+            TRUE ~ "More than or equal 3"
+        )
+    ) %>%
+    ggplot(aes(x=YearOfRelease, y=WorldwideGross, label=Movie, color = chars_type)) +
+    geom_point(alpha=0.7) +
+    geom_label_repel(aes(label=ifelse(WorldwideGross>1e+09 | chars_type == "More than or equal 3", as.character(Movie), '')),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  min.segment.length = 0,
+                  segment.color = 'grey50') +
+    scale_color_fivethirtyeight() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Doanh thu toàn cầu") +
+    xlab("Năm sản xuất")
+```
+
+Theo số nhân vật và budget
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    inner_join(chars_in_movies) %>%
+    select(Movie, char_count, WorldwideGross, Budget) %>%
+    mutate(
+        chars_type = case_when(
+            char_count < 3 ~ "Less than 3",
+            TRUE ~ "More than or equal 3"
+        )
+    ) %>% View()
+    ggplot(aes(x=Budget, y=WorldwideGross, label=Movie, color = chars_type)) +
+    geom_point(alpha=0.7) +
+    geom_label_repel(aes(label=ifelse(WorldwideGross>1e+09 | chars_type == "More than or equal 3", as.character(Movie), '')),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  min.segment.length = 0,
+                  segment.color = 'grey50') +
+    scale_color_fivethirtyeight() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Doanh thu toàn cầu") +
+    xlab("Kinh phí")
+```
+
+Tương quan giữa Youtube và doanh thu
+
+Số lượt view đối với doanh thu
+
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    ggplot(aes(x=YoutubeTopViews, y=YoutubeTopCounts, size = WorldwideGross, label=Movie)) +
+    geom_point(alpha=0.7, colour = "red", show.legend = FALSE) +
+    geom_label_repel(aes(label=as.character(Movie)),
+                  box.padding   = 0.35,
+                  point.padding = 0.5,
+                  min.segment.length = 0,
+                  show.legend = FALSE,
+                  segment.color = 'grey50') +
+    scale_color_fivethirtyeight() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Số tuần Trailer đứng Top view Youtube") +
+    xlab("Tổng số View các tuần đứng Top Youtube của Trailer (Triệu)")
+```
+
+
+Theo budget
+```{r message = FALSE, echo=FALSE}
+mcu %>%
+    select(Movie, WorldwideGross, Budget) %>%
+    ggplot(aes(x=Budget, y=WorldwideGross / 1e+06)) +
+    geom_point(alpha=0.7, colour = "red") +
+    geom_label_repel(aes(label=ifelse(WorldwideGross>1e+09 | grepl("Doctor", Movie), as.character(Movie), '')),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  min.segment.length = 0,
+                  segment.color = 'grey50') +
+    scale_color_fivethirtyeight() +
+    theme_fivethirtyeight() +
+    theme(axis.title = element_text()) + 
+    ylab("Doanh thu toàn cầu (Triệu USD)") +
+    xlab("Kinh phí (Triệu USD)")
+```
+
+
+```{r message = FALSE, echo=FALSE}
+cor(mcu$Budget, mcu$WorldwideGross)
+```
+
+
+
